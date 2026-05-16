@@ -2,12 +2,20 @@
 
 Custom Pi extension installed globally.
 
-- Press `Tab` to toggle between PLAN and BUILD mode.
-- Footer shows `⏸ PLAN` or `▶ BUILD`.
-- `/plan` also toggles the mode.
-- PLAN mode allows only read-only tools: `read`, `bash`, `grep`, `find`, `ls`.
-- BUILD mode restores normal built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
+## Modes
 
-After installing/reloading, press `Tab` once to enter PLAN mode. Press `Tab` again to return to BUILD mode.
+- **BUILD** (`▶ BUILD`) - normal tool access: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
+- **PLAN** (`⏸ PLAN`) - read-only exploration for creating a numbered plan. Pi will ask whether to execute/refine/stay after a plan is produced.
+- **CONVERSE** (`💬 CONVERSE`) - read-only free conversation. Pi can inspect files, but will not edit/build and will not ask you to accept a plan.
+
+## Controls
+
+- Press `Tab` to cycle: `BUILD → PLAN → CONVERSE → BUILD`.
+- `/plan` toggles PLAN mode directly.
+- `/converse` toggles CONVERSE mode directly.
+- `/todos` shows current tracked plan progress.
+
+PLAN and CONVERSE allow only read-only tools: `read`, `bash`, `grep`, `find`, `ls`.
+Bash is restricted to an allowlist of read-only commands in both modes.
 
 Note: bare `Tab` normally does autocomplete. This extension intentionally takes over Tab while loaded.
