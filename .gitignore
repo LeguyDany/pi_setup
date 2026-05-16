@@ -1,0 +1,51 @@
+# Secrets / auth
+auth.json
+**/auth.json
+**/*token*
+**/*secret*
+**/*credential*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+.env
+.env.*
+
+# Session / conversation state
+sessions/
+history/
+logs/
+transcripts/
+
+# Cache / generated / temporary files
+cache/
+tmp/
+temp/
+logs/
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+.DS_Store
+
+# Package/cache/internal state
+packages/
+bin/
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+bun.lockb
+
+# Local machine-specific config
+local.*
+*.local.*
+**/local.*
+**/.local.*
+**/settings.local.*
+**/config.local.*
+
+# Optional: ignore model/provider config if it contains API endpoints or keys
+# Remove this line if your models.json is safe and you want it versioned.
+models.json
