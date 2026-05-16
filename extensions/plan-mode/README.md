@@ -10,7 +10,7 @@ Custom Pi extension installed globally.
 
 ## Controls
 
-- Press `Tab` to cycle: `BUILD → PLAN → CONVERSE → BUILD`.
+- Press `Ctrl+Shift+M` to cycle: `BUILD → PLAN → CONVERSE → BUILD`.
 - `/plan` toggles PLAN mode directly.
 - `/converse` toggles CONVERSE mode directly.
 - `/todos` shows current tracked plan progress.
@@ -22,4 +22,4 @@ When you execute a plan, Pi tracks the numbered plan steps in a TODO widget. Aft
 PLAN and CONVERSE allow only read-only tools: `read`, `bash`, `grep`, `find`, `ls`.
 Bash is restricted to an allowlist of read-only commands in both modes.
 
-Note: bare `Tab` normally does autocomplete. This extension intentionally takes over Tab while loaded.
+Note: `Ctrl+M` is not used because terminals send the same input for `Ctrl+M` and `Enter`.

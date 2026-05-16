@@ -5,7 +5,7 @@
  * PLAN and CONVERSE are read-only; BUILD has normal tool access.
  *
  * Features:
- * - Tab cycles BUILD -> PLAN -> CONVERSE -> BUILD
+ * - Ctrl+Shift+M cycles BUILD -> PLAN -> CONVERSE -> BUILD
  * - /plan toggles PLAN mode
  * - /converse toggles CONVERSE mode
  * - Bash restricted to allowlisted read-only commands in PLAN/CONVERSE
@@ -283,7 +283,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		description: "Show current plan todo list",
 		handler: async (_args, ctx) => {
 			if (todoItems.length === 0) {
-				ctx.ui.notify("No todos. Press Tab or use /plan to enter PLAN mode first", "info");
+				ctx.ui.notify("No todos. Press Ctrl+Shift+M or use /plan to enter PLAN mode first", "info");
 				return;
 			}
 			const list = todoItems.map((item, i) => `${i + 1}. ${item.completed ? "✓" : "○"} ${item.text}`).join("\n");
@@ -291,7 +291,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(Key.ctrl("m"), {
+	pi.registerShortcut(Key.ctrlShift("m"), {
 		description: "Cycle BUILD/PLAN/CONVERSE mode",
 		handler: async (ctx) => cycleMode(ctx),
 	});
@@ -304,7 +304,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (!isSafeCommand(command)) {
 			return {
 				block: true,
-				reason: `${mode === "plan" ? "Plan" : "Converse"} mode: command blocked (not allowlisted). Press Tab to cycle to BUILD mode first.\nCommand: ${command}`,
+				reason: `${mode === "plan" ? "Plan" : "Converse"} mode: command blocked (not allowlisted). Press Ctrl+Shift+M to cycle to BUILD mode first.\nCommand: ${command}`,
 			};
 		}
 	});
