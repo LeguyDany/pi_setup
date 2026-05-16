@@ -47,6 +47,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let mode: Mode = "build";
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
+	let workStartedAt: number | undefined;
+	let frozenElapsedMs = 0;
+	let timerInterval: ReturnType<typeof setInterval> | undefined;
+	let lastTimerCtx: ExtensionContext | undefined;
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
@@ -54,7 +58,27 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		default: false,
 	});
 
+	function formatElapsed(ms: number): string {
+		const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+		const seconds = totalSeconds % 60;
+		const totalMinutes = Math.floor(totalSeconds / 60);
+		const minutes = totalMinutes % 60;
+		const hours = Math.floor(totalMinutes / 60);
+
+		if (hours > 0) {
+			return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+		}
+		return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+	}
+
+	function timerText(ctx: ExtensionContext): string {
+		const elapsed = workStartedAt === undefined ? frozenElapsedMs : Date.now() - workStartedAt;
+		return ctx.ui.theme.fg("dim", formatElapsed(elapsed));
+	}
+
 	function updateStatus(ctx: ExtensionContext): void {
+		lastTimerCtx = ctx;
+
 		// Footer status
 		if (executionMode && todoItems.length > 0) {
 			const completed = todoItems.filter((t) => t.completed).length;
@@ -66,6 +90,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		} else {
 			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("success", "▶ BUILD"));
 		}
+		ctx.ui.setStatus("plan-mode-timer", timerText(ctx));
 
 		// Widget showing todo list
 		if (executionMode && todoItems.length > 0) {
@@ -81,6 +106,34 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		} else {
 			ctx.ui.setWidget("plan-todos", undefined);
 		}
+	}
+
+	function clearTimerInterval(): void {
+		if (timerInterval !== undefined) {
+			clearInterval(timerInterval);
+			timerInterval = undefined;
+		}
+	}
+
+	function startTimer(ctx: ExtensionContext): void {
+		clearTimerInterval();
+		lastTimerCtx = ctx;
+		frozenElapsedMs = 0;
+		workStartedAt = Date.now();
+		timerInterval = setInterval(() => {
+			if (lastTimerCtx) updateStatus(lastTimerCtx);
+		}, 1000);
+		updateStatus(ctx);
+	}
+
+	function freezeTimer(ctx: ExtensionContext): void {
+		if (workStartedAt !== undefined) {
+			frozenElapsedMs = Date.now() - workStartedAt;
+			workStartedAt = undefined;
+		}
+		clearTimerInterval();
+		lastTimerCtx = ctx;
+		updateStatus(ctx);
 	}
 
 	function activeToolsForMode(): string[] {
@@ -287,11 +340,19 @@ Restrictions:
 
 Ask clarifying questions before writing the plan when needed.
 
-Create a detailed numbered plan under a "Plan:" header:
+Create a detailed numbered plan under a "Plan:" header.
+
+Plan-writing rules:
+- Each numbered item must be a concrete, self-contained implementation task.
+- Each item must still make sense when shown alone in a TODO widget.
+- Include the file, function, UI element, or behavior being changed when useful.
+- Do NOT use section headings, fragments, or labels that end with a colon.
+- Do NOT include vague validation-only items such as "Behavior manually" or "Verify behavior manually".
+- If testing is needed, describe the specific behavior to test, e.g. "Confirm the footer timer resets on a new user prompt".
 
 Plan:
-1. First step description
-2. Second step description
+1. Add timer lifecycle state to extensions/plan-mode/index.ts.
+2. Update the footer status rendering to show the timer beside the mode label.
 ...
 
 Do NOT attempt to make changes - just describe what you would do.`,
@@ -332,13 +393,18 @@ Do NOT attempt to make changes.`,
 Remaining steps:
 ${todoList}
 
-Execute each step in order.
+Execute each meaningful implementation step in order.
 After completing each step, immediately call the plan_step_done tool with that step number so the TODO list updates right away.
+Only mark a step complete after its described file, function, UI behavior, or validation task is actually complete.
 If the tool is unavailable, include a [DONE:n] tag in your response as a fallback.`,
 					display: false,
 				},
 			};
 		}
+	});
+
+	pi.on("agent_start", async (_event, ctx) => {
+		startTimer(ctx);
 	});
 
 	// Track progress while the assistant streams and after each turn
@@ -360,6 +426,8 @@ If the tool is unavailable, include a [DONE:n] tag in your response as a fallbac
 
 	// Handle plan completion and plan mode UI
 	pi.on("agent_end", async (event, ctx) => {
+		freezeTimer(ctx);
+
 		// Check if execution is complete
 		if (executionMode && todoItems.length > 0) {
 			if (todoItems.every((t) => t.completed)) {
@@ -420,6 +488,11 @@ If the tool is unavailable, include a [DONE:n] tag in your response as a fallbac
 				pi.sendUserMessage(refinement.trim());
 			}
 		}
+	});
+
+	pi.on("session_shutdown", async () => {
+		clearTimerInterval();
+		lastTimerCtx = undefined;
 	});
 
 	// Restore state on session start/resume

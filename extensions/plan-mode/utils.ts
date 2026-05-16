@@ -110,20 +110,42 @@ export function cleanStepText(text: string): string {
 	let cleaned = text
 		.replace(/\*{1,2}([^*]+)\*{1,2}/g, "$1") // Remove bold/italic
 		.replace(/`([^`]+)`/g, "$1") // Remove code
-		.replace(
-			/^(Use|Run|Execute|Create|Write|Read|Check|Verify|Update|Modify|Add|Remove|Delete|Install)\s+(the\s+)?/i,
-			"",
-		)
 		.replace(/\s+/g, " ")
 		.trim();
 
 	if (cleaned.length > 0) {
 		cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 	}
-	if (cleaned.length > 50) {
-		cleaned = `${cleaned.slice(0, 47)}...`;
+	if (cleaned.length > 70) {
+		cleaned = `${cleaned.slice(0, 67)}...`;
 	}
 	return cleaned;
+}
+
+export function isMeaningfulTodoText(text: string): boolean {
+	const normalized = text.replace(/\s+/g, " ").trim();
+	if (normalized.length < 8) return false;
+	if (/[:：]\s*$/.test(normalized)) return false;
+	if (/^[\w.$/-]+\([^)]*\)\s*[:：]?$/i.test(normalized)) return false;
+
+	const lower = normalized.toLowerCase();
+	const vagueItems = new Set([
+		"behavior manually",
+		"test extraction with examples",
+		"verify behavior manually",
+		"test manually",
+		"manual testing",
+		"behavior manually test",
+	]);
+	if (vagueItems.has(lower.replace(/[.:：]\s*$/, ""))) return false;
+	if (/^(test|verify|check|confirm|validate)\s+(the\s+)?(behavior|functionality|changes?)\s*(manually)?\s*$/i.test(normalized)) {
+		return false;
+	}
+
+	const actionPattern = /\b(add|adjust|build|change|clean|confirm|create|define|document|ensure|extract|filter|fix|implement|improve|include|insert|mark|modify|preserve|prevent|refactor|remove|replace|restore|review|skip|start|stop|update|wire)\b/i;
+	const objectPattern = /\b(file|function|helper|logic|prompt|rule|status|state|step|text|timer|todo|tool|widget|mode|behavior|extraction|execution|validation|test|example|ctx|\.ts|\.js|\.json|\w+\(\))/i;
+
+	return actionPattern.test(normalized) && objectPattern.test(normalized);
 }
 
 export function extractTodoItems(message: string): TodoItem[] {
@@ -141,7 +163,7 @@ export function extractTodoItems(message: string): TodoItem[] {
 			.trim();
 		if (text.length > 5 && !text.startsWith("`") && !text.startsWith("/") && !text.startsWith("-")) {
 			const cleaned = cleanStepText(text);
-			if (cleaned.length > 3) {
+			if (isMeaningfulTodoText(cleaned)) {
 				items.push({ step: items.length + 1, text: cleaned, completed: false });
 			}
 		}
