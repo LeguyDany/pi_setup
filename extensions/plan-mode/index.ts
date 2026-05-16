@@ -79,6 +79,29 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return [modeLine];
 	}
 
+	function renderTodoWidget(ctx: ExtensionContext): string[] {
+		const theme = ctx.ui.theme;
+		const completed = todoItems.filter((t) => t.completed).length;
+		const total = todoItems.length;
+		const percent = total === 0 ? 0 : Math.round((completed / total) * 100);
+		const barWidth = 20;
+		const filled = total === 0 ? 0 : Math.round((completed / total) * barWidth);
+		const bar = theme.fg("success", "█".repeat(filled)) + theme.fg("muted", "░".repeat(barWidth - filled));
+		const lines = [
+			`${theme.fg("accent", "Plan")} ${completed}/${total} ${percent.toString().padStart(3)}% |${bar}|`,
+		];
+
+		for (const item of todoItems) {
+			if (item.completed) {
+				lines.push(theme.fg("success", "☑ ") + theme.fg("muted", theme.strikethrough(item.text)));
+			} else {
+				lines.push(`${theme.fg("muted", "☐ ")}${item.text}`);
+			}
+		}
+
+		return lines;
+	}
+
 	function formatElapsedTime(ms: number): string {
 		const totalSeconds = Math.floor(ms / 1000);
 		const minutes = Math.floor(totalSeconds / 60);
@@ -95,6 +118,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function updateStatus(ctx: ExtensionContext): void {
 		lastDashboardCtx = ctx;
 		ctx.ui.setWidget("plan-dashboard", renderDashboardWidget(ctx), { placement: "belowEditor" });
+		ctx.ui.setWidget("plan-todos", todoItems.length > 0 ? renderTodoWidget(ctx) : undefined);
 	}
 
 	function stopFooterTimer(ctx?: ExtensionContext): void {
@@ -267,7 +291,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(Key.tab, {
+	pi.registerShortcut(Key.ctrl("m"), {
 		description: "Cycle BUILD/PLAN/CONVERSE mode",
 		handler: async (ctx) => cycleMode(ctx),
 	});
