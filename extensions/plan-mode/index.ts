@@ -15,7 +15,6 @@
  * - Progress tracking widget during execution
  */
 
-import { execFile } from "child_process";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -30,12 +29,6 @@ const CONVERSE_MODE_TOOLS = READ_ONLY_TOOLS;
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const PLAN_EXECUTION_TOOLS = [...NORMAL_MODE_TOOLS, "plan_step_done"];
 type Mode = "build" | "plan" | "converse";
-type DiffCache = {
-	at: number;
-	cwd: string;
-	lines: string[];
-	refreshInFlight: boolean;
-};
 
 // Type guard for assistant messages
 function isAssistantMessage(m: AgentMessage): m is AssistantMessage {
@@ -54,13 +47,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let mode: Mode = "build";
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
-	let footerInstalled = false;
-	let footerTui: { requestRender(): void } | undefined;
 	let turnStartedAt: number | undefined;
 	let turnElapsedMs = 0;
 	let timerHandle: ReturnType<typeof setInterval> | undefined;
 	let lastDashboardCtx: ExtensionContext | undefined;
-	let diffCache: DiffCache = { at: 0, cwd: "", lines: [], refreshInFlight: false };
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
 		type: "boolean",
@@ -75,72 +65,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		ctx.ui.setWidget("plan-dashboard", undefined);
 	}
 
-	function formatTokens(count: number | null | undefined): string {
-		if (count === null || count === undefined) return "?";
-		if (count < 1000) return count.toString();
-		if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-		if (count < 1000000) return `${Math.round(count / 1000)}k`;
-		if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
-		return `${Math.round(count / 1000000)}M`;
-	}
-
-	function git(cwd: string, args: string[]): Promise<{ status: number; stdout: string }> {
-		return new Promise((resolve) => {
-			execFile(
-				"git",
-				["--no-optional-locks", ...args],
-				{ cwd, encoding: "utf8", timeout: 1000, maxBuffer: 1024 * 1024 },
-				(error, stdout) => {
-					resolve({ status: error ? (typeof error.code === "number" ? error.code : 1) : 0, stdout: stdout ?? "" });
-				},
-			);
-		});
-	}
-
-	function scheduleDiffRefresh(ctx: ExtensionContext): void {
-		const cwd = ctx.cwd;
-		const now = Date.now();
-		const stale = diffCache.cwd !== cwd || now - diffCache.at > 5000;
-		if (!stale || diffCache.refreshInFlight) return;
-
-		diffCache = { ...diffCache, cwd, at: diffCache.at || now, refreshInFlight: true };
-		void refreshDiffLines(ctx, cwd, now);
-	}
-
-	async function refreshDiffLines(ctx: ExtensionContext, cwd: string, startedAt: number): Promise<void> {
-		try {
-			const status = await git(cwd, ["status", "--short"]);
-			if (status.status !== 0) {
-				diffCache = { at: startedAt, cwd, lines: [ctx.ui.theme.fg("muted", "not a git repo")], refreshInFlight: false };
-				updateStatus(ctx);
-				return;
-			}
-
-			const statusLines = status.stdout.trim().split("\n").filter(Boolean);
-			if (statusLines.length === 0) {
-				diffCache = { at: startedAt, cwd, lines: [ctx.ui.theme.fg("muted", "clean")], refreshInFlight: false };
-				updateStatus(ctx);
-				return;
-			}
-
-			const shortstat = await git(cwd, ["diff", "--shortstat"]);
-			const lines: string[] = [];
-			const shortstatText = shortstat.status === 0 ? shortstat.stdout.trim() : "";
-			if (shortstatText) lines.push(ctx.ui.theme.fg("muted", shortstatText));
-			for (const line of statusLines.slice(0, 8)) {
-				const code = line.slice(0, 2).trim() || "?";
-				const file = line.slice(3);
-				const color = code.includes("?") ? "warning" : code.includes("D") ? "error" : "success";
-				lines.push(`${ctx.ui.theme.fg(color, code.padEnd(2))} ${file}`);
-			}
-			if (statusLines.length > 8) lines.push(ctx.ui.theme.fg("muted", `… ${statusLines.length - 8} more`));
-			diffCache = { at: startedAt, cwd, lines, refreshInFlight: false };
-		} catch {
-			diffCache = { at: startedAt, cwd, lines: [ctx.ui.theme.fg("muted", "diff unavailable")], refreshInFlight: false };
-		}
-		updateStatus(ctx);
-	}
-
 	function renderDashboardWidget(ctx: ExtensionContext): string[] {
 		const theme = ctx.ui.theme;
 		const elapsed = getElapsedTime();
@@ -152,37 +76,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					? theme.fg("accent", `💬 CONVERSE${suffix}`)
 					: theme.fg("success", `▶ BUILD${suffix}`);
 
-		const contextUsage = ctx.getContextUsage();
-		const contextTokens = formatTokens(contextUsage?.tokens ?? null);
-		const contextWindow = formatTokens(contextUsage?.contextWindow ?? ctx.model?.contextWindow ?? null);
-		const contextPercent =
-			contextUsage?.percent === null || contextUsage?.percent === undefined ? "?" : `${contextUsage.percent.toFixed(1)}%`;
-		const reasoning = ctx.model?.reasoning ? "reasoning on" : "reasoning off";
-		const completed = todoItems.filter((t) => t.completed).length;
-
-		const lines = [
-			modeLine,
-			theme.fg("muted", "────────────────────────────────────────"),
-			theme.fg("accent", "Session"),
-			`Model: ${ctx.model?.id ?? "no-model"} ${theme.fg("muted", `(${reasoning})`)}`,
-			`Context: ${contextTokens}/${contextWindow} ${theme.fg("muted", contextPercent)}`,
-			"",
-			theme.fg("accent", "Diffs"),
-			...(diffCache.cwd === ctx.cwd && diffCache.lines.length > 0 ? diffCache.lines : [theme.fg("muted", "loading…")]),
-		];
-
-		if (todoItems.length > 0) {
-			lines.push("", theme.fg("accent", `Plan Todos (${completed}/${todoItems.length})`));
-			for (const item of todoItems) {
-				if (item.completed) {
-					lines.push(theme.fg("success", "☑ ") + theme.fg("muted", theme.strikethrough(item.text)));
-				} else {
-					lines.push(`${theme.fg("muted", "☐ ")}${item.text}`);
-				}
-			}
-		}
-
-		return lines;
+		return [modeLine];
 	}
 
 	function formatElapsedTime(ms: number): string {
@@ -200,28 +94,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	function updateStatus(ctx: ExtensionContext): void {
 		lastDashboardCtx = ctx;
-		scheduleDiffRefresh(ctx);
-
-		// Replace the built-in footer entirely. The built-in footer recomputes token/cost
-		// stats by scanning all session entries on every render, which can stutter in long sessions.
-		if (!footerInstalled) {
-			ctx.ui.setFooter((tui, theme) => {
-				footerTui = tui;
-				return {
-					render() {
-						const elapsed = getElapsedTime();
-						const suffix = elapsed ? ` ${elapsed}` : "";
-						if (mode === "plan") return [theme.fg("warning", `⏸ PLAN${suffix}`)];
-						if (mode === "converse") return [theme.fg("accent", `💬 CONVERSE${suffix}`)];
-						return [theme.fg("success", `▶ BUILD${suffix}`)];
-					},
-					invalidate() {},
-				};
-			});
-			footerInstalled = true;
-		}
 		ctx.ui.setWidget("plan-dashboard", renderDashboardWidget(ctx), { placement: "belowEditor" });
-		footerTui?.requestRender();
 	}
 
 	function stopFooterTimer(ctx?: ExtensionContext): void {
@@ -242,7 +115,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		lastDashboardCtx = ctx;
 		timerHandle = setInterval(() => {
 			if (lastDashboardCtx) updateStatus(lastDashboardCtx);
-			else footerTui?.requestRender();
 		}, 1000);
 		updateStatus(ctx);
 	}
@@ -613,9 +485,6 @@ If the tool is unavailable, include a [DONE:n] tag in your response as a fallbac
 	pi.on("session_shutdown", async (_event, ctx) => {
 		stopFooterTimer();
 		clearRetiredUi(ctx);
-		ctx.ui.setFooter(undefined);
-		footerInstalled = false;
-		footerTui = undefined;
 		lastDashboardCtx = undefined;
 	});
 
