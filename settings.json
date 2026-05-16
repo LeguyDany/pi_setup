@@ -6,5 +6,6 @@
   "terminal": {
     "imageWidthCells": 60
   },
-  "theme": "tokyo-night-moon"
+  "theme": "tokyo-night-moon",
+  "hideThinkingBlock": true
 }

@@ -47,93 +47,86 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let mode: Mode = "build";
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
-	let workStartedAt: number | undefined;
-	let frozenElapsedMs = 0;
-	let timerInterval: ReturnType<typeof setInterval> | undefined;
-	let lastTimerCtx: ExtensionContext | undefined;
-
+	let footerInstalled = false;
+	let footerTui: { requestRender(): void } | undefined;
+	let turnStartedAt: number | undefined;
+	let turnElapsedMs = 0;
+	let timerHandle: ReturnType<typeof setInterval> | undefined;
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
 		type: "boolean",
 		default: false,
 	});
 
-	function formatElapsed(ms: number): string {
-		const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-		const seconds = totalSeconds % 60;
-		const totalMinutes = Math.floor(totalSeconds / 60);
-		const minutes = totalMinutes % 60;
-		const hours = Math.floor(totalMinutes / 60);
-
-		if (hours > 0) {
-			return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-		}
-		return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+	function clearRetiredUi(ctx: ExtensionContext): void {
+		ctx.ui.setWidget("plan-todos", undefined);
+		ctx.ui.setStatus("plan-mode", undefined);
+		ctx.ui.setStatus("plan-mode-todos", undefined);
+		ctx.ui.setStatus("plan-mode-timer", undefined);
 	}
 
-	function timerText(ctx: ExtensionContext): string {
-		const elapsed = workStartedAt === undefined ? frozenElapsedMs : Date.now() - workStartedAt;
-		return ctx.ui.theme.fg("dim", formatElapsed(elapsed));
+	function formatElapsedTime(ms: number): string {
+		const totalSeconds = Math.floor(ms / 1000);
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+	}
+
+	function getElapsedTime(): string | undefined {
+		if (turnStartedAt === undefined) return undefined;
+		const elapsed = timerHandle ? Date.now() - turnStartedAt : turnElapsedMs;
+		return formatElapsedTime(elapsed);
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
-		lastTimerCtx = ctx;
-
-		// Footer status
-		if (executionMode && todoItems.length > 0) {
-			const completed = todoItems.filter((t) => t.completed).length;
-			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("accent", `📋 ${completed}/${todoItems.length}`));
-		} else if (mode === "plan") {
-			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", "⏸ PLAN"));
-		} else if (mode === "converse") {
-			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("accent", "💬 CONVERSE"));
-		} else {
-			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("success", "▶ BUILD"));
-		}
-		ctx.ui.setStatus("plan-mode-timer", timerText(ctx));
-
-		// Widget showing todo list
-		if (executionMode && todoItems.length > 0) {
-			const lines = todoItems.map((item) => {
-				if (item.completed) {
-					return (
-						ctx.ui.theme.fg("success", "☑ ") + ctx.ui.theme.fg("muted", ctx.ui.theme.strikethrough(item.text))
-					);
-				}
-				return `${ctx.ui.theme.fg("muted", "☐ ")}${item.text}`;
+		// Replace the built-in footer entirely. The built-in footer recomputes token/cost
+		// stats by scanning all session entries on every render, which can stutter in long sessions.
+		if (!footerInstalled) {
+			ctx.ui.setFooter((tui, theme) => {
+				footerTui = tui;
+				return {
+					render() {
+						const elapsed = getElapsedTime();
+						const suffix = elapsed ? ` ${elapsed}` : "";
+						if (mode === "plan") return [theme.fg("warning", `⏸ PLAN${suffix}`)];
+						if (mode === "converse") return [theme.fg("accent", `💬 CONVERSE${suffix}`)];
+						return [theme.fg("success", `▶ BUILD${suffix}`)];
+					},
+					invalidate() {},
+				};
 			});
-			ctx.ui.setWidget("plan-todos", lines);
-		} else {
-			ctx.ui.setWidget("plan-todos", undefined);
+			footerInstalled = true;
 		}
+		footerTui?.requestRender();
 	}
 
-	function clearTimerInterval(): void {
-		if (timerInterval !== undefined) {
-			clearInterval(timerInterval);
-			timerInterval = undefined;
+	function stopFooterTimer(ctx?: ExtensionContext): void {
+		if (turnStartedAt !== undefined) {
+			turnElapsedMs = Date.now() - turnStartedAt;
 		}
+		if (timerHandle) {
+			clearInterval(timerHandle);
+			timerHandle = undefined;
+		}
+		if (ctx) updateStatus(ctx);
 	}
 
-	function startTimer(ctx: ExtensionContext): void {
-		clearTimerInterval();
-		lastTimerCtx = ctx;
-		frozenElapsedMs = 0;
-		workStartedAt = Date.now();
-		timerInterval = setInterval(() => {
-			if (lastTimerCtx) updateStatus(lastTimerCtx);
+	function startFooterTimer(ctx: ExtensionContext): void {
+		stopFooterTimer();
+		turnStartedAt = Date.now();
+		turnElapsedMs = 0;
+		timerHandle = setInterval(() => {
+			footerTui?.requestRender();
 		}, 1000);
 		updateStatus(ctx);
 	}
 
-	function freezeTimer(ctx: ExtensionContext): void {
-		if (workStartedAt !== undefined) {
-			frozenElapsedMs = Date.now() - workStartedAt;
-			workStartedAt = undefined;
-		}
-		clearTimerInterval();
-		lastTimerCtx = ctx;
-		updateStatus(ctx);
+	function updateTurnStartStatus(ctx: ExtensionContext): void {
+		startFooterTimer(ctx);
+	}
+
+	function updateTurnEndStatus(ctx: ExtensionContext): void {
+		stopFooterTimer(ctx);
 	}
 
 	function activeToolsForMode(): string[] {
@@ -348,11 +341,11 @@ Plan-writing rules:
 - Include the file, function, UI element, or behavior being changed when useful.
 - Do NOT use section headings, fragments, or labels that end with a colon.
 - Do NOT include vague validation-only items such as "Behavior manually" or "Verify behavior manually".
-- If testing is needed, describe the specific behavior to test, e.g. "Confirm the footer timer resets on a new user prompt".
+- If testing is needed, describe the specific behavior to test, e.g. "Confirm the footer shows only the current mode label".
 
 Plan:
-1. Add timer lifecycle state to extensions/plan-mode/index.ts.
-2. Update the footer status rendering to show the timer beside the mode label.
+1. Update the footer status rendering in extensions/plan-mode/index.ts to show only the current mode label.
+2. Remove obsolete footer status cleanup for retired UI elements.
 ...
 
 Do NOT attempt to make changes - just describe what you would do.`,
@@ -404,7 +397,7 @@ If the tool is unavailable, include a [DONE:n] tag in your response as a fallbac
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
-		startTimer(ctx);
+		updateTurnStartStatus(ctx);
 	});
 
 	// Track progress while the assistant streams and after each turn
@@ -426,7 +419,7 @@ If the tool is unavailable, include a [DONE:n] tag in your response as a fallbac
 
 	// Handle plan completion and plan mode UI
 	pi.on("agent_end", async (event, ctx) => {
-		freezeTimer(ctx);
+		updateTurnEndStatus(ctx);
 
 		// Check if execution is complete
 		if (executionMode && todoItems.length > 0) {
@@ -490,9 +483,12 @@ If the tool is unavailable, include a [DONE:n] tag in your response as a fallbac
 		}
 	});
 
-	pi.on("session_shutdown", async () => {
-		clearTimerInterval();
-		lastTimerCtx = undefined;
+	pi.on("session_shutdown", async (_event, ctx) => {
+		stopFooterTimer();
+		clearRetiredUi(ctx);
+		ctx.ui.setFooter(undefined);
+		footerInstalled = false;
+		footerTui = undefined;
 	});
 
 	// Restore state on session start/resume
@@ -541,6 +537,7 @@ If the tool is unavailable, include a [DONE:n] tag in your response as a fallbac
 		}
 
 		pi.setActiveTools(activeToolsForMode());
+		clearRetiredUi(ctx);
 		updateStatus(ctx);
 	});
 }
