@@ -15,6 +15,10 @@ Custom Pi extension installed globally.
 - `/converse` toggles CONVERSE mode directly.
 - `/todos` shows current tracked plan progress.
 
+## TODO progress
+
+When you execute a plan, Pi tracks the numbered plan steps in a TODO widget. After each step is completed, the assistant calls the `plan_step_done` tool so the widget and footer update immediately from `☐` to `☑`. `[DONE:n]` response markers are still supported as a fallback.
+
 PLAN and CONVERSE allow only read-only tools: `read`, `bash`, `grep`, `find`, `ls`.
 Bash is restricted to an allowlist of read-only commands in both modes.
 

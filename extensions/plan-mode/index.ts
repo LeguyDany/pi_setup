@@ -19,6 +19,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.js";
 
 // Tools
@@ -26,6 +27,7 @@ const READ_ONLY_TOOLS = ["read", "bash", "grep", "find", "ls"];
 const PLAN_MODE_TOOLS = READ_ONLY_TOOLS;
 const CONVERSE_MODE_TOOLS = READ_ONLY_TOOLS;
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const PLAN_EXECUTION_TOOLS = [...NORMAL_MODE_TOOLS, "plan_step_done"];
 type Mode = "build" | "plan" | "converse";
 
 // Type guard for assistant messages
@@ -84,6 +86,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function activeToolsForMode(): string[] {
 		if (mode === "plan") return PLAN_MODE_TOOLS;
 		if (mode === "converse") return CONVERSE_MODE_TOOLS;
+		if (executionMode) return PLAN_EXECUTION_TOOLS;
 		return NORMAL_MODE_TOOLS;
 	}
 
@@ -135,6 +138,39 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		persistState(); // Save cleared state so resume doesn't restore old execution mode
 	}
 
+	function sendPlanComplete(ctx: ExtensionContext): void {
+		const completedList = todoItems.map((t) => `~~${t.text}~~`).join("\n");
+		pi.sendMessage(
+			{ customType: "plan-complete", content: `**Plan Complete!** ✓\n\n${completedList}`, display: true },
+			{ triggerTurn: false },
+		);
+		finishExecution(ctx);
+	}
+
+	function completeStep(step: number, ctx: ExtensionContext): { ok: boolean; message: string } {
+		if (!executionMode || todoItems.length === 0) {
+			return { ok: false, message: "No plan is currently executing." };
+		}
+
+		const item = todoItems.find((t) => t.step === step);
+		if (!item) {
+			return { ok: false, message: `Invalid plan step: ${step}.` };
+		}
+		if (item.completed) {
+			return { ok: true, message: `Step ${step} was already marked complete.` };
+		}
+
+		item.completed = true;
+		updateStatus(ctx);
+		persistState();
+
+		if (todoItems.every((t) => t.completed)) {
+			sendPlanComplete(ctx);
+		}
+
+		return { ok: true, message: `Marked step ${step} complete: ${item.text}` };
+	}
+
 	function updateProgressFromText(text: string, ctx: ExtensionContext): void {
 		if (!executionMode || todoItems.length === 0) return;
 
@@ -143,6 +179,27 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			persistState();
 		}
 	}
+
+	pi.registerTool({
+		name: "plan_step_done",
+		label: "Plan Step Done",
+		description: "Mark a plan TODO step complete immediately after finishing it during plan execution.",
+		promptSnippet: "Mark a tracked plan step complete during plan execution",
+		promptGuidelines: [
+			"Use plan_step_done immediately after finishing each numbered plan step during plan execution so the TODO widget updates right away.",
+		],
+		parameters: Type.Object({
+			step: Type.Integer({ description: "The numbered plan step that was completed" }),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const result = completeStep(params.step, ctx);
+			return {
+				content: [{ type: "text", text: result.message }],
+				isError: !result.ok,
+				details: { step: params.step, completed: result.ok },
+			};
+		},
+	});
 
 	pi.registerCommand("plan", {
 		description: "Toggle plan mode (read-only exploration)",
@@ -276,7 +333,8 @@ Remaining steps:
 ${todoList}
 
 Execute each step in order.
-After completing a step, include a [DONE:n] tag in your response.`,
+After completing each step, immediately call the plan_step_done tool with that step number so the TODO list updates right away.
+If the tool is unavailable, include a [DONE:n] tag in your response as a fallback.`,
 					display: false,
 				},
 			};
@@ -305,12 +363,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		// Check if execution is complete
 		if (executionMode && todoItems.length > 0) {
 			if (todoItems.every((t) => t.completed)) {
-				const completedList = todoItems.map((t) => `~~${t.text}~~`).join("\n");
-				pi.sendMessage(
-					{ customType: "plan-complete", content: `**Plan Complete!** ✓\n\n${completedList}`, display: true },
-					{ triggerTurn: false },
-				);
-				finishExecution(ctx);
+				sendPlanComplete(ctx);
 			}
 			return;
 		}
@@ -349,7 +402,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		if (choice?.startsWith("Execute")) {
 			mode = "build";
 			executionMode = todoItems.length > 0;
-			pi.setActiveTools(NORMAL_MODE_TOOLS);
+			pi.setActiveTools(activeToolsForMode());
 			updateStatus(ctx);
 			persistState();
 
