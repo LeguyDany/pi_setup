@@ -1,11 +1,11 @@
 {
-  "lastChangelogVersion": "0.74.0",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "medium",
+  "lastChangelogVersion": "0.79.8",
+  "defaultProvider": "opencode-go",
+  "defaultModel": "mimo-v2.5-pro",
+  "defaultThinkingLevel": "high",
   "terminal": {
     "imageWidthCells": 60
   },
   "theme": "tokyo-night-moon",
-  "hideThinkingBlock": true
+  "hideThinkingBlock": false
 }
