@@ -49,3 +49,6 @@ local.*
 # Optional: ignore model/provider config if it contains API endpoints or keys
 # Remove this line if your models.json is safe and you want it versioned.
 models.json
+
+# misc
+trust.json
